@@ -252,7 +252,7 @@ def page_acoes(user):
         with st.expander("Cadastrar nova ação", expanded=True):
             labels = {f"{r['medicao_fiscal']} | {r.get('municipio') or ''} | {r.get('bairro') or ''}": r["id"] for _, r in trafos.iterrows()}
             with st.form("nova_acao"):
-                trafo_label = st.selectbox("Medição Fiscal / Trafo", list(labels.keys()), index = None)
+                trafo_label = st.selectbox("Medição Fiscal / Trafo", list(labels.keys()), index = None,placeholder="Procure pela Medição Fiscal")
                 tipo = st.selectbox("Tipo de ação", TIPOS_ACAO)
                 data_prog = st.date_input("Data programada", value=date.today())
                 status = st.selectbox("Status", STATUS_ACAO, index=0)
