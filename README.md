@@ -179,3 +179,21 @@ Para projetos já publicados antes desta atualização, execute no Supabase o ar
 ```text
 sql/02_update_fluxo_varredura.sql
 ```
+
+## Correção de fluxo — Levantamento/Prospecção para Varredura
+
+Nesta versão, ao atualizar uma ação de **LEVANTAMENTO** ou **PROSPECÇÃO** para **EXECUTADO**, o app não cria mais a varredura automaticamente no mesmo clique.
+
+Fluxo corrigido:
+
+1. O usuário salva o status como `EXECUTADO`.
+2. O sistema grava o status e recarrega a tela.
+3. Um formulário separado aparece: **Próxima etapa: programar varredura**.
+4. A varredura só é criada se o usuário clicar em **Sim, programar varredura**.
+5. Se clicar em **Não programar agora**, nada é criado.
+
+Para projetos já implantados, execute no Supabase:
+
+```sql
+sql/02_update_fluxo_varredura.sql
+```

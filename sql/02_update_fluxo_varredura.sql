@@ -1,8 +1,12 @@
--- MF Control - Atualização opcional para fluxo Levantamento/Prospecção -> Varredura
--- Execute somente se seu projeto já foi criado com uma versão anterior do schema.
--- Esta atualização adiciona campos úteis à view para rastrear ações vinculadas.
+-- MF Control - Atualização para fluxo Levantamento/Prospecção -> Varredura
+-- Execute este arquivo no Supabase SQL Editor se seu projeto já foi criado com versão anterior.
+-- Corrige/recria a view com campos necessários para vincular ações.
 
-create or replace view public.vw_acoes_completa as
+begin;
+
+drop view if exists public.vw_acoes_completa cascade;
+
+create view public.vw_acoes_completa as
 select
     a.id,
     a.trafo_id,
@@ -26,3 +30,5 @@ select
     a.updated_at
 from public.acoes a
 join public.trafos t on t.id = a.trafo_id;
+
+commit;

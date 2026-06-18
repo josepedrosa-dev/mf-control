@@ -280,6 +280,79 @@ def page_trafos(user):
     st.dataframe(df, use_container_width=True, hide_index=True)
 
 
+def get_acao_view(acao_id):
+    res = supabase.table("vw_acoes_completa").select("*").eq("id", acao_id).limit(1).execute()
+    rows = res.data or []
+    return rows[0] if rows else None
+
+
+def render_fluxo_varredura_pendente(user):
+    """Mostra um formulário separado para criar varredura após executar levantamento/prospecção.
+
+    Importante: este bloco fica fora do form de atualização de status para evitar que a
+    varredura seja criada automaticamente no mesmo clique em que o status é salvo.
+    """
+    pending_id = st.session_state.get("acao_para_varredura")
+    if not pending_id:
+        return
+
+    selected = get_acao_view(pending_id)
+    if not selected:
+        st.session_state.pop("acao_para_varredura", None)
+        return
+
+    if selected.get("tipo_acao") not in ["LEVANTAMENTO", "PROSPECÇÃO"] or selected.get("status") != "EXECUTADO":
+        st.session_state.pop("acao_para_varredura", None)
+        return
+
+    if has_child_action(selected["id"], tipo_acao="VARREDURA"):
+        st.info("Esta ação já possui uma varredura vinculada. Nenhuma duplicidade será criada.")
+        st.session_state.pop("acao_para_varredura", None)
+        return
+
+    st.divider()
+    st.subheader("Próxima etapa: programar varredura")
+    st.info(
+        f"O {selected['tipo_acao'].lower()} do trafo **{selected['medicao_fiscal']}** foi concluído. "
+        "Deseja programar a varredura agora?"
+    )
+
+    with st.form(f"form_varredura_pos_{pending_id}"):
+        c1, c2, c3 = st.columns(3)
+        data_varredura = c1.date_input("Data programada da varredura", value=date.today())
+        responsavel_varredura = c2.text_input("Responsável pela varredura", value=selected.get("responsavel") or "")
+        equipe_varredura = c3.text_input("Equipe de campo", value=selected.get("equipe") or "")
+        obs_varredura = st.text_area(
+            "Observação da varredura",
+            value=f"Varredura criada após conclusão de {selected['tipo_acao'].lower()}.",
+        )
+        c_ok, c_cancel = st.columns(2)
+        confirmar = c_ok.form_submit_button("Sim, programar varredura", use_container_width=True)
+        cancelar = c_cancel.form_submit_button("Não programar agora", use_container_width=True)
+
+    if confirmar:
+        try:
+            create_varredura_from_action(
+                selected=selected,
+                user_id=user.get("id"),
+                data_programada=data_varredura,
+                responsavel=responsavel_varredura,
+                equipe=equipe_varredura,
+                observacao=obs_varredura,
+            )
+            st.session_state.pop("acao_para_varredura", None)
+            clear_cache()
+            st.success("Varredura programada com sucesso.")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Erro ao criar varredura: {e}")
+
+    if cancelar:
+        st.session_state.pop("acao_para_varredura", None)
+        st.info("Fluxo encerrado sem programar varredura.")
+        st.rerun()
+
+
 def page_acoes(user):
     st.markdown("<div class='big-title'>Ações</div>", unsafe_allow_html=True)
     trafos = load_trafos()
@@ -339,67 +412,62 @@ def page_acoes(user):
     filt = apply_filters(df)
     st.dataframe(filt, use_container_width=True, hide_index=True)
 
+    # Formulário separado para decisão de avançar para varredura.
+    # Ele aparece somente depois que o status foi salvo como EXECUTADO.
+    render_fluxo_varredura_pendente(user)
+
     st.subheader("Atualizar status")
     ids = filt["id"].tolist()
     if not ids:
         return
-    row_label = st.selectbox("Selecione a ação", [f"{r.medicao_fiscal} | {r.tipo_acao} | {r.data_programada} | {r.status}" for r in filt.itertuples()])
-    idx = [f"{r.medicao_fiscal} | {r.tipo_acao} | {r.data_programada} | {r.status}" for r in filt.itertuples()].index(row_label)
+    labels_update = [f"{r.medicao_fiscal} | {r.tipo_acao} | {r.data_programada} | {r.status}" for r in filt.itertuples()]
+    row_label = st.selectbox("Selecione a ação", labels_update)
+    idx = labels_update.index(row_label)
     selected = filt.iloc[idx].to_dict()
     if not can_edit_action(user["perfil"], selected["tipo_acao"]):
         st.warning("Seu perfil não pode editar esta ação.")
         return
+
     ja_tem_varredura_vinculada = False
     if selected["tipo_acao"] in ["LEVANTAMENTO", "PROSPECÇÃO"]:
         ja_tem_varredura_vinculada = has_child_action(selected["id"], tipo_acao="VARREDURA")
 
     with st.form("update_status"):
         novo_status = st.selectbox("Novo status", STATUS_ACAO, index=STATUS_ACAO.index(selected["status"]))
-        data_execucao = st.date_input("Data execução", value=pd.to_datetime(selected.get("data_execucao")).date() if pd.notna(selected.get("data_execucao")) else date.today())
+        data_execucao = st.date_input(
+            "Data execução",
+            value=pd.to_datetime(selected.get("data_execucao")).date() if pd.notna(selected.get("data_execucao")) else date.today(),
+        )
         obs_update = st.text_area("Observação da atualização")
 
         criar_revisita = False
-        criar_varredura_pos = False
-        data_varredura_pos = date.today()
-        responsavel_varredura = ""
-        equipe_varredura = ""
-        obs_varredura = ""
-
         if selected["tipo_acao"] in ["LEVANTAMENTO", "PROSPECÇÃO"] and novo_status == "EXECUTADO":
-            st.markdown("#### Próxima etapa")
+            st.caption("Após salvar como EXECUTADO, o sistema perguntará em um formulário separado se deseja programar a varredura.")
             if ja_tem_varredura_vinculada:
                 st.info("Esta ação já possui uma varredura vinculada. O sistema não criará duplicidade.")
-            else:
-                criar_varredura_pos = st.checkbox("Seguir para varredura após esta conclusão", value=True)
-                if criar_varredura_pos:
-                    cvar1, cvar2, cvar3 = st.columns(3)
-                    data_varredura_pos = cvar1.date_input("Data programada da varredura", value=date.today(), key="data_varredura_pos")
-                    responsavel_varredura = cvar2.text_input("Responsável pela varredura", value="", key="resp_varredura_pos")
-                    equipe_varredura = cvar3.text_input("Equipe de campo", value="", key="equipe_varredura_pos")
-                    obs_varredura = st.text_area("Observação da varredura", value=f"Varredura criada após conclusão de {selected['tipo_acao'].lower()}.", key="obs_varredura_pos")
 
         if selected["tipo_acao"] == "VARREDURA" and novo_status == "EXECUTADO":
             criar_revisita = st.checkbox("Criar revisita automática", value=bool(selected.get("gerar_revisita", True)))
         ok = st.form_submit_button("Atualizar")
+
     if ok:
         try:
+            nova_obs = (selected.get("observacao") or "") + (f"\n{datetime.now():%d/%m/%Y %H:%M} - {obs_update}" if obs_update else "")
             supabase.table("acoes").update({
                 "status": novo_status,
                 "data_execucao": str(data_execucao) if novo_status == "EXECUTADO" else selected.get("data_execucao"),
-                "observacao": (selected.get("observacao") or "") + (f"\n{datetime.now():%d/%m/%Y %H:%M} - {obs_update}" if obs_update else "")
+                "observacao": nova_obs,
             }).eq("id", selected["id"]).execute()
             log_history(selected["id"], user.get("id"), "status", selected["status"], novo_status, obs_update)
 
-            if (selected["tipo_acao"] in ["LEVANTAMENTO", "PROSPECÇÃO"] and novo_status == "EXECUTADO"
-                    and criar_varredura_pos and not ja_tem_varredura_vinculada):
-                create_varredura_from_action(
-                    selected=selected,
-                    user_id=user.get("id"),
-                    data_programada=data_varredura_pos,
-                    responsavel=responsavel_varredura,
-                    equipe=equipe_varredura,
-                    observacao=obs_varredura,
-                )
+            if selected["tipo_acao"] in ["LEVANTAMENTO", "PROSPECÇÃO"] and novo_status == "EXECUTADO":
+                if not ja_tem_varredura_vinculada:
+                    st.session_state["acao_para_varredura"] = selected["id"]
+                    clear_cache()
+                    st.success("Status atualizado. Agora confirme abaixo se deseja programar a varredura.")
+                    st.rerun()
+                else:
+                    st.session_state.pop("acao_para_varredura", None)
 
             if selected["tipo_acao"] == "VARREDURA" and novo_status == "EXECUTADO" and criar_revisita:
                 if not has_child_action(selected["id"], tipo_acao="VARREDURA", origem="REVISITA"):
@@ -417,7 +485,6 @@ def page_acoes(user):
             clear_cache(); st.success("Status atualizado."); st.rerun()
         except Exception as e:
             st.error(f"Erro ao atualizar: {e}")
-
 
 def to_excel_bytes(dfs: dict) -> bytes:
     output = io.BytesIO()

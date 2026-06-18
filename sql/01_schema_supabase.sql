@@ -80,9 +80,11 @@ drop trigger if exists trg_acoes_updated_at on public.acoes;
 create trigger trg_acoes_updated_at before update on public.acoes
 for each row execute function public.set_updated_at();
 
-create or replace view public.vw_acoes_completa as
+drop view if exists public.vw_acoes_completa cascade;
+create view public.vw_acoes_completa as
 select
     a.id,
+    a.trafo_id,
     t.medicao_fiscal,
     t.regional,
     t.municipio,
@@ -94,6 +96,7 @@ select
     a.responsavel,
     a.equipe,
     a.origem,
+    a.acao_origem_id,
     a.gerar_revisita,
     a.meses_revisita,
     a.observacao,
