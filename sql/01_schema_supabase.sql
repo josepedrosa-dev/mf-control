@@ -1,4 +1,4 @@
--- MF Control - Schema Supabase
+-- MF Control - Schema Supabase completo
 -- Execute este arquivo no Supabase: SQL Editor > New Query > Run.
 
 create extension if not exists "pgcrypto";
@@ -23,6 +23,16 @@ create table if not exists public.trafos (
     latitude numeric,
     longitude numeric,
     observacao text,
+    prioridade text not null default 'MÉDIA' check (prioridade in ('ALTA','MÉDIA','BAIXA')),
+    prazo_limite date,
+    etapa_atual text not null default 'NOVO' check (etapa_atual in (
+        'NOVO',
+        'LEVANTAMENTO_PROGRAMADO','LEVANTAMENTO_EXECUTADO',
+        'PROSPECCAO_PROGRAMADA','PROSPECCAO_EXECUTADA',
+        'VARREDURA_PROGRAMADA','VARREDURA_EXECUTADA',
+        'REVISITA_PROGRAMADA','REVISITA_EXECUTADA',
+        'ENCERRADO'
+    )),
     ativo boolean not null default true,
     created_by uuid references public.app_users(id),
     created_at timestamptz not null default now(),
@@ -35,7 +45,7 @@ create table if not exists public.acoes (
     tipo_acao text not null check (tipo_acao in ('LEVANTAMENTO','PROSPECÇÃO','VARREDURA')),
     data_programada date not null,
     data_execucao date,
-    status text not null default 'PROGRAMADO' check (status in ('PROGRAMADO','PRÉ-PROGRAMADO','EXECUTADO','REPROGRAMAR','CANCELAR')),
+    status text not null default 'PROGRAMADO' check (status in ('PROGRAMADO','PRÉ-PROGRAMADO','EM EXECUÇÃO','EXECUTADO','REPROGRAMAR','CANCELADO','ENCERRADO','CANCELAR')),
     responsavel text,
     equipe text,
     origem text not null default 'MANUAL' check (origem in ('MANUAL','IMPORTAÇÃO','REVISITA')),
@@ -89,10 +99,13 @@ select
     t.regional,
     t.municipio,
     t.bairro,
+    t.prioridade,
+    t.prazo_limite,
+    t.etapa_atual,
     a.tipo_acao,
     a.data_programada,
     a.data_execucao,
-    a.status,
+    case when a.status = 'CANCELAR' then 'CANCELADO' else a.status end as status,
     a.responsavel,
     a.equipe,
     a.origem,
@@ -106,8 +119,6 @@ select
 from public.acoes a
 join public.trafos t on t.id = a.trafo_id;
 
--- RLS simples para MVP: qualquer usuário autenticado pode ler/gravar.
--- O controle fino de tela/perfil é feito no app pelo campo app_users.perfil.
 alter table public.app_users enable row level security;
 alter table public.trafos enable row level security;
 alter table public.acoes enable row level security;
