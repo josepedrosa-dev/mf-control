@@ -132,6 +132,44 @@ def clear_cache():
     load_users.clear()
 
 
+def get_acao_raw(acao_id):
+    res = supabase.table("acoes").select("*").eq("id", acao_id).single().execute()
+    return res.data
+
+
+def has_child_action(acao_id, tipo_acao=None, origem=None):
+    query = supabase.table("acoes").select("id").eq("acao_origem_id", acao_id)
+    if tipo_acao:
+        query = query.eq("tipo_acao", tipo_acao)
+    if origem:
+        query = query.eq("origem", origem)
+    res = query.limit(1).execute()
+    return bool(res.data)
+
+
+def create_varredura_from_action(selected, user_id, data_programada, responsavel="", equipe="", observacao=""):
+    origem_txt = selected.get("tipo_acao", "AÇÃO")
+    payload = {
+        "trafo_id": get_acao_raw(selected["id"])["trafo_id"],
+        "tipo_acao": "VARREDURA",
+        "data_programada": str(data_programada),
+        "status": "PROGRAMADO",
+        "responsavel": responsavel or selected.get("responsavel"),
+        "equipe": equipe or selected.get("equipe"),
+        "origem": "MANUAL",
+        "acao_origem_id": selected["id"],
+        "gerar_revisita": True,
+        "meses_revisita": 2,
+        "observacao": observacao or f"Varredura criada após conclusão de {origem_txt.lower()}.",
+        "created_by": user_id,
+    }
+    res = supabase.table("acoes").insert(payload).execute()
+    nova_id = res.data[0]["id"]
+    log_history(nova_id, user_id, "criação", None, "PROGRAMADO", f"Varredura gerada a partir da ação {selected['id']}.")
+    log_history(selected["id"], user_id, "encadeamento", origem_txt, "VARREDURA", "Usuário optou por seguir para varredura.")
+    return nova_id
+
+
 def can_edit_action(user_perfil, tipo):
     if user_perfil in PERMISSOES_EDICAO:
         return True
@@ -252,7 +290,7 @@ def page_acoes(user):
         with st.expander("Cadastrar nova ação", expanded=True):
             labels = {f"{r['medicao_fiscal']} | {r.get('municipio') or ''} | {r.get('bairro') or ''}": r["id"] for _, r in trafos.iterrows()}
             with st.form("nova_acao"):
-                trafo_label = st.selectbox("Medição Fiscal / Trafo", list(labels.keys()), index = None,placeholder="Procure pela Medição Fiscal")
+                trafo_label = st.selectbox("Medição Fiscal / Trafo", list(labels.keys()))
                 tipo = st.selectbox("Tipo de ação", TIPOS_ACAO)
                 data_prog = st.date_input("Data programada", value=date.today())
                 status = st.selectbox("Status", STATUS_ACAO, index=0)
@@ -311,11 +349,35 @@ def page_acoes(user):
     if not can_edit_action(user["perfil"], selected["tipo_acao"]):
         st.warning("Seu perfil não pode editar esta ação.")
         return
+    ja_tem_varredura_vinculada = False
+    if selected["tipo_acao"] in ["LEVANTAMENTO", "PROSPECÇÃO"]:
+        ja_tem_varredura_vinculada = has_child_action(selected["id"], tipo_acao="VARREDURA")
+
     with st.form("update_status"):
         novo_status = st.selectbox("Novo status", STATUS_ACAO, index=STATUS_ACAO.index(selected["status"]))
         data_execucao = st.date_input("Data execução", value=pd.to_datetime(selected.get("data_execucao")).date() if pd.notna(selected.get("data_execucao")) else date.today())
         obs_update = st.text_area("Observação da atualização")
+
         criar_revisita = False
+        criar_varredura_pos = False
+        data_varredura_pos = date.today()
+        responsavel_varredura = ""
+        equipe_varredura = ""
+        obs_varredura = ""
+
+        if selected["tipo_acao"] in ["LEVANTAMENTO", "PROSPECÇÃO"] and novo_status == "EXECUTADO":
+            st.markdown("#### Próxima etapa")
+            if ja_tem_varredura_vinculada:
+                st.info("Esta ação já possui uma varredura vinculada. O sistema não criará duplicidade.")
+            else:
+                criar_varredura_pos = st.checkbox("Seguir para varredura após esta conclusão", value=True)
+                if criar_varredura_pos:
+                    cvar1, cvar2, cvar3 = st.columns(3)
+                    data_varredura_pos = cvar1.date_input("Data programada da varredura", value=date.today(), key="data_varredura_pos")
+                    responsavel_varredura = cvar2.text_input("Responsável pela varredura", value="", key="resp_varredura_pos")
+                    equipe_varredura = cvar3.text_input("Equipe de campo", value="", key="equipe_varredura_pos")
+                    obs_varredura = st.text_area("Observação da varredura", value=f"Varredura criada após conclusão de {selected['tipo_acao'].lower()}.", key="obs_varredura_pos")
+
         if selected["tipo_acao"] == "VARREDURA" and novo_status == "EXECUTADO":
             criar_revisita = st.checkbox("Criar revisita automática", value=bool(selected.get("gerar_revisita", True)))
         ok = st.form_submit_button("Atualizar")
@@ -327,16 +389,31 @@ def page_acoes(user):
                 "observacao": (selected.get("observacao") or "") + (f"\n{datetime.now():%d/%m/%Y %H:%M} - {obs_update}" if obs_update else "")
             }).eq("id", selected["id"]).execute()
             log_history(selected["id"], user.get("id"), "status", selected["status"], novo_status, obs_update)
+
+            if (selected["tipo_acao"] in ["LEVANTAMENTO", "PROSPECÇÃO"] and novo_status == "EXECUTADO"
+                    and criar_varredura_pos and not ja_tem_varredura_vinculada):
+                create_varredura_from_action(
+                    selected=selected,
+                    user_id=user.get("id"),
+                    data_programada=data_varredura_pos,
+                    responsavel=responsavel_varredura,
+                    equipe=equipe_varredura,
+                    observacao=obs_varredura,
+                )
+
             if selected["tipo_acao"] == "VARREDURA" and novo_status == "EXECUTADO" and criar_revisita:
-                nova_data = data_execucao + relativedelta(months=int(selected.get("meses_revisita") or 2))
-                supabase.table("acoes").insert({
-                    "trafo_id": supabase.table("acoes").select("trafo_id").eq("id", selected["id"]).single().execute().data["trafo_id"],
-                    "tipo_acao": "VARREDURA", "data_programada": str(nova_data), "status": "PRÉ-PROGRAMADO",
-                    "responsavel": selected.get("responsavel"), "equipe": selected.get("equipe"), "origem": "REVISITA",
-                    "acao_origem_id": selected["id"], "meses_revisita": int(selected.get("meses_revisita") or 2),
-                    "observacao": f"Revisita automática gerada a partir da varredura executada em {data_execucao}.",
-                    "created_by": user.get("id")
-                }).execute()
+                if not has_child_action(selected["id"], tipo_acao="VARREDURA", origem="REVISITA"):
+                    nova_data = data_execucao + relativedelta(months=int(selected.get("meses_revisita") or 2))
+                    supabase.table("acoes").insert({
+                        "trafo_id": get_acao_raw(selected["id"])["trafo_id"],
+                        "tipo_acao": "VARREDURA", "data_programada": str(nova_data), "status": "PRÉ-PROGRAMADO",
+                        "responsavel": selected.get("responsavel"), "equipe": selected.get("equipe"), "origem": "REVISITA",
+                        "acao_origem_id": selected["id"], "meses_revisita": int(selected.get("meses_revisita") or 2),
+                        "observacao": f"Revisita automática gerada a partir da varredura executada em {data_execucao}.",
+                        "created_by": user.get("id")
+                    }).execute()
+                else:
+                    st.info("Esta varredura já possui revisita vinculada. Nenhuma duplicidade foi criada.")
             clear_cache(); st.success("Status atualizado."); st.rerun()
         except Exception as e:
             st.error(f"Erro ao atualizar: {e}")

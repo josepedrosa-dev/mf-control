@@ -157,3 +157,25 @@ Para ambiente corporativo definitivo, recomendo evoluir para:
 - Alertas de ações atrasadas.
 - Priorização automática por perda/eficiência.
 - Integração com Power BI.
+
+
+## Atualização do fluxo Levantamento/Prospecção → Varredura
+
+A tela **Ações > Atualizar status** agora possui o bloco **Próxima etapa**.
+
+Quando uma ação do tipo **LEVANTAMENTO** ou **PROSPECÇÃO** for atualizada para **EXECUTADO**, o sistema pergunta se o usuário deseja **seguir para varredura**.
+
+Se confirmado, o app cria automaticamente uma nova ação:
+
+- tipo: `VARREDURA`;
+- status: `PROGRAMADO`;
+- vinculada à ação original por `acao_origem_id`;
+- com responsável, equipe, data programada e observação definidos pelo usuário.
+
+O sistema também evita duplicidade: se a ação já tiver uma varredura vinculada, não cria outra automaticamente.
+
+Para projetos já publicados antes desta atualização, execute no Supabase o arquivo:
+
+```text
+sql/02_update_fluxo_varredura.sql
+```
