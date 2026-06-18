@@ -305,7 +305,7 @@ def page_acoes(user):
     ids = filt["id"].tolist()
     if not ids:
         return
-    row_label = st.selectbox("Selecione a ação", [f"{r.medicao_fiscal} | {r.tipo_acao} | {r.data_programada} | {r.status}" for r in filt.itertuples()])
+    row_label = st.selectbox("Selecione a ação", [f"{r.medicao_fiscal} | {r.tipo_acao} | {r.data_programada} | {r.status}" for r in filt.itertuples()], index = None, placeholder = "Procure pela medição fiscal")
     idx = [f"{r.medicao_fiscal} | {r.tipo_acao} | {r.data_programada} | {r.status}" for r in filt.itertuples()].index(row_label)
     selected = filt.iloc[idx].to_dict()
     if not can_edit_action(user["perfil"], selected["tipo_acao"]):
