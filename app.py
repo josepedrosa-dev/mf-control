@@ -455,7 +455,7 @@ def page_acoes(user):
         with st.expander("Cadastrar nova ação", expanded=True):
             labels = {f"{r['medicao_fiscal']} | {r.get('municipio') or ''} | {r.get('bairro') or ''}": r["id"] for _, r in trafos.iterrows()}
             with st.form("nova_acao"):
-                trafo_label = st.selectbox("Medição Fiscal / Trafo", list(labels.keys()))
+                trafo_label = st.selectbox("Medição Fiscal / Trafo", list(labels.keys()), input = None, placeholder = "Digite a medição fiscal")
                 tipo = st.selectbox("Tipo de ação", TIPOS_ACAO)
                 origem = "MANUAL"
                 if tipo == "VARREDURA":
